@@ -9,6 +9,8 @@ interface AnimationOptions {
   staggerDelay?: number;
   ease?: string;
   pixelScale?: number;
+  /** Scale factor 0–1 to shrink SVG to fit within placeholder (default 1) */
+  sizeScale?: number;
 }
 
 /**
@@ -27,7 +29,8 @@ export async function injectAnimatedSVG(
     strokeDuration = 0.85,
     staggerDelay = 0.02,
     ease = 'power2.out',
-    pixelScale = 100
+    pixelScale = 100,
+    sizeScale = 1
   } = options;
 
   try {
@@ -48,26 +51,29 @@ export async function injectAnimatedSVG(
       return null;
     }
 
-    // Get plane geometry dimensions
-    const geometry = placeholder.geometry as THREE.PlaneGeometry;
-    const geometryWidth = geometry.parameters?.width || 1;
-    const geometryHeight = geometry.parameters?.height || 1;
-
-    // Size the SVG to match the placeholder's base geometry
-    // CSS2DRenderer handles the scaling and projection automatically
-    svg.setAttribute('width', `${geometryWidth * pixelScale}px`);
-    svg.setAttribute('height', `${geometryHeight * pixelScale}px`);
+    // Get dimensions from world-space bounding box so we match both PlaneGeometry
+    // and BufferGeometry (GLTF meshes) and correctly account for all transforms
+    scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(placeholder);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    // Use two largest dimensions (smallest = thickness for flat planes)
+    const [dim0, dim1] = [size.x, size.y, size.z].sort((a, b) => b - a).slice(0, 2);
+    const geometryWidth = Math.max(dim0, 0.001);
+    const geometryHeight = Math.max(dim1, 0.001);
+    const w = geometryWidth * pixelScale * sizeScale;
+    const h = geometryHeight * pixelScale * sizeScale;
+    svg.setAttribute('width', `${w}px`);
+    svg.setAttribute('height', `${h}px`);
     svg.style.display = 'block';
 
-    // Create CSS2DObject
+    // Create CSS2DObject - use world transform so it overlays correctly when placeholder is nested
     const label = new CSS2DObject(container);
-    label.position.copy(placeholder.position);
-    label.rotation.copy(placeholder.rotation);
-    
-    // Apply the same scale as the placeholder to match its size exactly
-    label.scale.copy(placeholder.scale);
+    scene.updateMatrixWorld(true);
+    placeholder.getWorldPosition(label.position);
+    placeholder.getWorldQuaternion(label.quaternion);
+    label.scale.set(1, 1, 1);
 
-    // Add to scene
     scene.add(label);
 
     // Placeholder starts invisible
@@ -116,7 +122,7 @@ export async function injectAnimatedSVG(
       // Set up stroke for drawing effect - light grey pencil style.
       // Use inline style so it overrides the SVG paths' existing style="...stroke-width:...".
       pathElement.style.stroke = '#555555';
-      pathElement.style.strokeWidth = '1.5';
+      pathElement.style.strokeWidth = '2';
 
       // Set up stroke-dasharray for drawing animation
       pathElement.style.strokeDasharray = `${pathLength}`;
